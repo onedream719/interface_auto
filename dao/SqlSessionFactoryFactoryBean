@@ -1,0 +1,32 @@
+package com.msxf.dataSource.factoryBean;
+
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.springframework.beans.factory.FactoryBean;
+
+
+/**
+ * sqlSessionFactory工厂bean
+ */
+public class SqlSessionFactoryFactoryBean implements FactoryBean<SqlSessionFactory> {
+
+    private SqlSessionFactory sqlSessionFactory;
+
+    public SqlSessionFactoryFactoryBean(SqlSessionFactory sqlSessionFactory) {
+        this.sqlSessionFactory = sqlSessionFactory;
+    }
+
+    @Override
+    public SqlSessionFactory getObject() throws Exception {
+        return sqlSessionFactory;
+    }
+
+    @Override
+    public Class<?> getObjectType() {
+        return SqlSessionFactory.class;
+    }
+
+    @Override
+    public boolean isSingleton() {
+        return true;
+    }
+}
