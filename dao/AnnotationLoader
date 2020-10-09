@@ -1,0 +1,242 @@
+package com.msxf.dataSource.core;
+
+import com.alibaba.druid.pool.DruidDataSource;
+import com.github.pagehelper.PageInterceptor;
+import com.msxf.dataSource.annotations.DynamicDataSource;
+import com.msxf.dataSource.factoryBean.DataSourceTransactionManagerFactoryBean;
+import com.msxf.dataSource.factoryBean.SqlSessionFactoryFactoryBean;
+import com.msxf.dataSource.register.BeanRegister;
+import com.msxf.dataSource.factoryBean.DataSourceFactoryBean;
+import com.msxf.dataSource.register.DefaultBeanRegister;
+import org.apache.ibatis.logging.slf4j.Slf4jImpl;
+import org.apache.ibatis.plugin.Interceptor;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.mybatis.spring.SqlSessionFactoryBean;
+import org.mybatis.spring.mapper.MapperScannerConfigurer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeansException;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.beans.factory.support.*;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationContextAware;
+import org.springframework.context.annotation.*;
+import org.springframework.core.env.Environment;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.springframework.core.io.support.ResourcePatternResolver;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+
+import javax.sql.DataSource;
+import java.util.*;
+
+
+/**
+ * @author: liang.pi
+ * @see DynamicDataSource
+ * 描述：解析注解获取配置，注册数据源等
+ */
+
+public class AnnotationLoader implements ApplicationContextAware,BeanDefinitionRegistryPostProcessor {
+    public final static Logger LOG = LoggerFactory.getLogger(AnnotationLoader.class);
+
+    private ScopeMetadataResolver scopeMetadataResolver = new AnnotationScopeMetadataResolver();
+    private BeanNameGenerator beanNameGenerator = new AnnotationBeanNameGenerator();
+
+    private ApplicationContext context;
+    private Set<MetaDataLoader> metaDataLoaders;
+
+    private Environment environment;
+    private Set<DataSourceConfig> dataSourceConfigs;
+
+
+    @Override
+    public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
+        context = applicationContext;
+        environment = context.getEnvironment();
+        loadMetaData();
+        loadProperties(environment);
+    }
+
+    /**
+     * 解析注解
+     */
+    private void loadMetaData(){
+        Map<String, Object> annotationBean = context.getBeansWithAnnotation(DynamicDataSource.class);
+        if(annotationBean == null || annotationBean.size() == 0){
+            throw new NullPointerException("找不到相应的" + DynamicDataSource.class + " bean");
+        }else if(annotationBean.size()  >  1){
+            throw new RuntimeException("只能有1个" + DynamicDataSource.class + "的bean，但是找到" + annotationBean.size() + "个");
+        }else{
+            Object value = annotationBean.entrySet().iterator().next().getValue();
+            DynamicDataSource annotation = value.getClass().getAnnotation(DynamicDataSource.class);
+            String[] loaders = annotation.value();
+            metaDataLoaders = new HashSet<>(loaders.length);
+            dataSourceConfigs = new HashSet<>(metaDataLoaders.size());
+
+            for(String loader : loaders){
+                String[] split = loader.split("=");
+                if(split.length != 3){
+                    throw new RuntimeException(DynamicDataSource.class + " 注解的值不合法:" + loader + "   示例    saas : com.xxx.dao : classpath:/mapper/*.xml");
+                }else{
+                    String[] xmlMappingPath = split[2].split(",");
+                    for(int i = 0 ; i < xmlMappingPath.length ; i ++){
+                        xmlMappingPath[i] = xmlMappingPath[i].trim();
+                    }
+                    metaDataLoaders.add(new MetaDataLoader(split[0].trim(),split[1].trim(),xmlMappingPath));
+                }
+            }
+        }
+    }
+
+
+    @Override
+    public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) throws BeansException {
+        for(DataSourceConfig config : dataSourceConfigs){
+            BeanRegister beanRegister = new DefaultBeanRegister(registry);
+            DefaultBeanNameGenerator nameGenerator = new DefaultBeanNameGenerator();
+            String dataSourceName = config.getDataSourceName();
+
+            //DruidDataSource
+            DataSource dataSource = createDataSource(config);
+            try {
+                beanRegister.register(dataSourceName, DataSourceFactoryBean.class, dataSource);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+
+            //SqlSessionFactory
+            SqlSessionFactory sqlSessionFactory = createSqlSessionFactory(dataSource,config.getXmlMappingPath());
+            String sqlSessionFactoryBeanName = nameGenerator.createSqlSessionFactoryBeanName(dataSourceName);
+            try {
+                beanRegister.register(sqlSessionFactoryBeanName, SqlSessionFactoryFactoryBean.class, sqlSessionFactory);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+
+            //事务管理
+            DataSourceTransactionManager dataSourceTransactionManager = createDataSourceTransactionManager(dataSource);
+            String dataSourceTransactionManagerBeanName = nameGenerator.createDataSourceTransactionManagerBeanName(config.getDataSourceName());
+            try {
+                beanRegister.register(dataSourceTransactionManagerBeanName, DataSourceTransactionManagerFactoryBean.class, dataSourceTransactionManager);
+            }catch (Exception e){
+                e.printStackTrace();
+            }
+
+            try {
+                MapperScannerConfigurer mapperScannerConfigurer = createMapperScannerConfigurer(config, sqlSessionFactoryBeanName);
+                mapperScannerConfigurer.postProcessBeanDefinitionRegistry(registry);
+            } catch (Exception e) {
+                e.printStackTrace();
+                throw new RuntimeException("实例化MapperScannerConfigurer失败" + e.getMessage());
+            }
+        }
+    }
+
+    @Override
+    public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
+
+    }
+
+
+    private void loadProperties(Environment environment) {
+        for(MetaDataLoader mateData : metaDataLoaders){
+            String url = environment.getProperty("spring.datasource." + mateData.getDataSourceName() + ".url");
+            String username = environment.getProperty("spring.datasource." + mateData.getDataSourceName() + ".username");
+            String password = environment.getProperty("spring.datasource." + mateData.getDataSourceName() + ".password");
+            String driverClassName = environment.getProperty("spring.datasource." + mateData.getDataSourceName() + ".driver-class-name");
+            String initialSize = environment.getProperty("spring.datasource." + mateData.getDataSourceName() + ".initialSize");
+            String minIdle = environment.getProperty("spring.datasource." + mateData.getDataSourceName() + ".minIdle");
+            String maxActive = environment.getProperty("spring.datasource." + mateData.getDataSourceName() + ".maxActive");
+            DataSourceConfig config = new DataSourceConfig(mateData.getDataSourceName(),mateData.getPackageName(),mateData.getMappingPath(),url, username, password, driverClassName);
+            if(initialSize != null){
+                config.setInitialSize(Integer.parseInt(initialSize));
+            }
+            if(minIdle != null){
+                config.setMinIdle(Integer.parseInt(minIdle));
+            }
+            if(maxActive != null){
+                config.setMaxActive(Integer.parseInt(maxActive));
+            }
+            dataSourceConfigs.add(config);
+        }
+    }
+
+
+    private DataSource createDataSource(DataSourceConfig config){
+        DruidDataSource ds = new DruidDataSource();
+        ds.setUrl(config.getUrl());
+        ds.setUsername(config.getUsername());
+        ds.setPassword(config.getPassword());
+        ds.setDriverClassName(config.getDriverClassName());
+        if(config.getInitialSize() != 0){
+            ds.setInitialSize(config.getInitialSize());
+        }
+        if(config.getMinIdle() != 0){
+            ds.setInitialSize(config.getMinIdle());
+        }
+        if(config.getMaxActive() != 0){
+            ds.setMaxActive(config.getMaxActive());
+        }
+
+        return ds;
+    }
+
+
+    private SqlSessionFactory createSqlSessionFactory(DataSource ds,String[] resourcePaths) {
+        SqlSessionFactoryBean bean = new SqlSessionFactoryBean();
+        bean.setDataSource(ds);
+
+        //分页插件
+        PageInterceptor pageHelper = new PageInterceptor();
+        Properties properties = new Properties();
+        properties.setProperty("helperDialect", "mysql");
+        properties.setProperty("reasonable", "false");
+        properties.setProperty("pageSizeZero", "true");
+        pageHelper.setProperties(properties);
+        bean.setPlugins(new Interceptor[]{pageHelper});
+
+        try {
+            //指定mapper xml目录
+            ResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
+            List<Resource> resources = new ArrayList<>();
+            for(String resourcePath : resourcePaths){
+                Resource[] resourceArray = resolver.getResources(resourcePath);
+                for(Resource resource : resourceArray){
+                    resources.add(resource);
+                }
+            }
+
+            bean.setMapperLocations(resources.toArray(new Resource[resources.size()]));
+            //设置配置项
+            org.apache.ibatis.session.Configuration configuration = new org.apache.ibatis.session.Configuration();
+            //自动把下划线转成驼峰
+            configuration.setMapUnderscoreToCamelCase(true);
+            configuration.setLogImpl(Slf4jImpl.class);
+            bean.setConfiguration(configuration);
+            return bean.getObject();
+        } catch (Exception e) {
+            LOG.error(e.getMessage(), e);
+            throw new RuntimeException(e);
+        }
+    }
+
+
+    private DataSourceTransactionManager createDataSourceTransactionManager(DataSource ds){
+        return new DataSourceTransactionManager(ds);
+    }
+
+    /**
+     * - 设置SqlSessionFactory
+     * - 设置dao所在的package路径，路径可以逗号或者分号进行分隔设置多个
+     * - 关联注解在dao类上的Annotation名字；
+     * - 上面的注解可以不需要
+     */
+    private MapperScannerConfigurer createMapperScannerConfigurer(DataSourceConfig dataSourceConfig,String sqlSessionFactoryBeanName) throws ClassNotFoundException, IllegalAccessException, InstantiationException {
+        MapperScannerConfigurer mapperScannerConfigurer = new MapperScannerConfigurer();
+        mapperScannerConfigurer.setSqlSessionFactoryBeanName(sqlSessionFactoryBeanName);
+        mapperScannerConfigurer.setBasePackage(dataSourceConfig.getPackageName());
+        return mapperScannerConfigurer;
+    }
+
+}
