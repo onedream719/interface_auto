@@ -1,0 +1,49 @@
+package com.msxf.dataSource.register;
+
+import com.msxf.dataSource.core.DefaultBeanNameGenerator;
+import com.msxf.dataSource.register.BeanRegister;
+import com.msxf.dataSource.factoryBean.DataSourceFactoryBean;
+import org.springframework.beans.factory.FactoryBean;
+import org.springframework.beans.factory.config.BeanDefinitionHolder;
+import org.springframework.beans.factory.config.ConstructorArgumentValues;
+import org.springframework.beans.factory.support.BeanDefinitionReaderUtils;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.RootBeanDefinition;
+import org.springframework.context.annotation.AnnotationScopeMetadataResolver;
+import org.springframework.context.annotation.ScopeMetadata;
+import org.springframework.context.annotation.ScopeMetadataResolver;
+
+/**
+ * spring对象注册器
+ */
+public class DefaultBeanRegister implements BeanRegister {
+    private ScopeMetadataResolver scopeMetadataResolver = new AnnotationScopeMetadataResolver();
+
+    private BeanDefinitionRegistry registry;
+
+    public DefaultBeanRegister(BeanDefinitionRegistry registry) {
+        this.registry = registry;
+    }
+
+    @Override
+    public void register(Object ...object) throws Exception {
+        String beanName = DefaultBeanNameGenerator.genBeanName(object);
+        register(beanName,DataSourceFactoryBean.class, object);
+    }
+
+    @Override
+    public void register(String beanName, Class<? extends FactoryBean> beanClass, Object...args){
+        RootBeanDefinition abd = new RootBeanDefinition(beanClass);
+        ConstructorArgumentValues cons = abd.getConstructorArgumentValues();
+        for (Object arg : args){
+            cons.addGenericArgumentValue(arg);
+        }
+
+        ScopeMetadata scopeMetadata = this.scopeMetadataResolver.resolveScopeMetadata(abd);
+        abd.setScope(scopeMetadata.getScopeName());
+
+        BeanDefinitionHolder definitionHolder = new BeanDefinitionHolder(abd, beanName);
+        BeanDefinitionReaderUtils.registerBeanDefinition(definitionHolder, registry);
+    }
+
+}
