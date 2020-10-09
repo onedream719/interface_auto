@@ -1,0 +1,28 @@
+package com.msxf.common.utils;
+
+
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.yaml.snakeyaml.Yaml;
+import java.io.*;
+import java.util.HashMap;
+import java.util.Map;
+
+
+public class YmlUtils {
+    public static void readFile(String path, String node, Map<String, Object> interfaceData_map) throws FileNotFoundException{
+        Yaml yaml = new Yaml();
+        Map map = yaml.loadAs(new FileInputStream(path), Map.class);
+        if(map != null && !map.isEmpty()){
+            map.forEach((k, v) -> {
+                if(node.trim().equals(k)){
+                    if (v instanceof Map<?, ?>){
+                        interfaceData_map.putAll((Map<String, Object>)v);
+                    }
+                }
+            });
+        }
+    }
+}
