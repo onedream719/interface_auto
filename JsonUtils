@@ -1,0 +1,136 @@
+package com.msxf.common.utils;
+
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
+import org.apache.commons.io.FileUtils;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+
+public class JsonUtils {
+    //当参数中出现@Body 替换其中的json 字段value
+    public static String replaceJsonBodyParams(String body, String keyPath, Object value) {
+        String res = null;
+        String [] keys = keyPath.split("\\.");
+        //当json为数组的情况，
+        if(body.startsWith("[")){
+            //这个步骤是为了直接将keyPath最开始的标号找到 例如 [0].productId  => productId
+            JSONArray list = JSONArray.parseArray(body);
+            String pattern = "\\[(\\d+)]";
+            Pattern r = Pattern.compile(pattern);
+            Matcher m = r.matcher(keys[0]);
+            boolean isFound = m.find();
+            if(!isFound){
+                throw new RuntimeException(String.format("根据[%s]，请检查接口函数中的@Body", keyPath));
+            }
+            List<String> keylist = Arrays.asList(keys);
+            keylist = new ArrayList<String>(keylist);
+            keylist.remove(0);
+            int index = Integer.parseInt(m.group(1));
+            JSONObject root = (JSONObject) list.get(index);
+            //移除最前面的标号 才便于后续的搜索 [0].products[0].productId => products[0].productId
+            list.remove(index);
+            JSONObject tmp = root;
+            String[] tmpKeys = (String [])keylist.toArray(new String[keylist.size()]);
+            root = findNote(root, tmpKeys);
+            //此时root即为要被修改的key，value， 修改它
+            root.put(keys[keys.length -1], value);
+            list.add(tmp);
+            res = list.toJSONString();
+        }else{
+            // 当json字符串不是list 是个object
+            JSONObject root= JSONObject.parseObject(body);
+            JSONObject result = root;
+//                            String [] keys = keyPath.split("\\.");
+            root = findNote(root, keys);
+            //此时root即为要被修改的key，value， 修改它
+            root.put(keys[keys.length -1], value);
+            res = result.toJSONString();
+        }
+        return res;
+
+    }
+
+    static JSONObject findNote(JSONObject root, String [] keys){
+        String body = root.toJSONString();
+        for(String key: keys){
+            //子节点为数组
+            if(key.contains("[") && key.contains("]")){
+                String pattern = "(\\w*)\\[(\\d+)\\]";
+                Pattern r = Pattern.compile(pattern);
+                Matcher m = r.matcher(key);
+                String keyName = "";
+                String keyIndex = "";
+                if(m.find()){
+                    keyName = m.group(1);
+                    keyIndex = m.group(2);
+                } else {
+                    throw new RuntimeException(String.format("根据[%s]，在这个json文件中并未匹配到，json文件内容为[%s]",
+                            key,
+                            body));
+                }
+                if(root.containsKey(keyName)){
+                    JSONArray array = root.getJSONArray(keyName);
+                    root = array.getJSONObject(Integer.parseInt(keyIndex));
+                }else {
+                    throw new RuntimeException(String.format("这个Json object: [%s]并不存在这个key： [%s]",
+                            root,
+                            keyName));
+                }
+
+            } else{
+                // 当json字符串不是list 是个object
+                if (root.containsKey(key)) {
+                    if (root.get(key) instanceof JSONObject){
+                        root = (JSONObject) root.get(key);
+                    }else{
+                        break;
+                    }
+
+                }else{
+                    throw new RuntimeException(String.format("这个Json object: [%s]并不存在这个key： [%s]",
+                            root,
+                            key));
+                }
+            }
+        }
+        return root;
+    }
+
+
+    /**
+     * 读取json文件，将json转换为map
+     * @param node   为json文件中的"创建会话智能分配成功"   这样的key
+     * @return map
+     */
+    public static String readFile(String fileName,String node) {
+        String jsonString = null;
+        String json = "";
+        try {
+            File file=new File(fileName);
+            String content= FileUtils.readFileToString(file,"UTF-8");
+            JSONObject jsonObject = JSONObject.parseObject(content);
+            if(!jsonObject.containsKey(node)){
+                throw new RuntimeException(String.format("数据文件[%s]下不存在[key=%s]" , fileName, node));
+            }
+            if(jsonObject.get(node) instanceof JSONObject) {
+                JSONObject body = (JSONObject)jsonObject.get(node);
+                json = body.toJSONString();
+            }else{
+                JSONArray body = (JSONArray)jsonObject.get(node);
+                json = body.toJSONString();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return json;
+    }
+
+
+}
