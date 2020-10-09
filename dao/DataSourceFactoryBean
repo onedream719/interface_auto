@@ -1,0 +1,43 @@
+package com.msxf.dataSource.factoryBean;
+
+import org.springframework.beans.factory.FactoryBean;
+
+
+/**
+ * dataSource工厂bean，用于获取dataSource
+ */
+public class DataSourceFactoryBean implements FactoryBean<Object> {
+    /**
+     * 要注入到spring中的对象
+     */
+    private Object object;
+    /**
+     * 是否单例，默认为是单例
+     */
+    private boolean singleton = true;
+
+
+    public DataSourceFactoryBean(Object object) {
+        this.object = object;
+    }
+
+    public DataSourceFactoryBean(Object object, boolean singleton) {
+        this.object = object;
+        this.singleton = singleton;
+    }
+
+    @Override
+    public Object getObject() throws Exception {
+        return this.object;
+    }
+
+    @Override
+    public Class<?> getObjectType() {
+        return object.getClass();
+    }
+
+    @Override
+    public boolean isSingleton() {
+        return singleton;
+    }
+}
