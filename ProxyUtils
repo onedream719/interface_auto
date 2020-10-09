@@ -1,0 +1,279 @@
+package com.msxf.common.utils;
+
+import java.io.File;
+
+import com.alibaba.fastjson.JSONObject;
+import com.msxf.common.domain.GlobalVar;
+import com.msxf.common.annotations.*;
+import com.msxf.common.domain.HttpRequest;
+import com.msxf.common.domain.HttpType;
+import javafx.geometry.Pos;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.AnnotationConfigUtils;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
+import org.springframework.core.annotation.*;
+import com.msxf.common.utils.AnnotationUtils;
+import org.springframework.core.type.StandardAnnotationMetadata;
+import org.springframework.stereotype.Component;
+import org.springframework.util.ClassUtils;
+
+import java.io.FileNotFoundException;
+import java.lang.annotation.Annotation;
+import java.lang.reflect.*;
+import java.util.*;
+
+
+@Component
+public class ProxyUtils{
+    private static String base_url;
+    private static MyInvocationHandler invocationHandler = new MyInvocationHandler();
+
+    @Value("${url.base_url}")
+    public void setBase_url(String base_url) {
+        ProxyUtils.base_url = base_url;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static Object create(Class<?> clazz) {
+        return Proxy.newProxyInstance(clazz.getClassLoader(), new Class[]{clazz}, invocationHandler);
+    }
+
+
+    public static class Parser {
+        private Class<?> introspectedClass;
+        private Method introspectedMethod;
+        private Annotation[] class_annotations;
+        private Annotation[] method_annotations;
+        private Annotation[][] param_annotations;
+        private Parameter[] parameters;
+        private final Set<Class<? extends Annotation>> available_method_annotations = new HashSet<>();
+        private final Set<Class<? extends Annotation>> available_param_annotations = new HashSet<>();
+        private Map<String, Object> param_map = new HashMap<>();
+        private Map<String, Object> data_map = new HashMap<>();
+        private Map<String, Object> header_map = new HashMap<>();
+        private Map<String, Object> ymlData_Map = new HashMap<>();
+        private HttpType httpType = null;
+        private String base_url = "";
+        private String rest_url = "";
+        private String resource_base_path = "";
+        private String body = "";
+        {
+            available_method_annotations.add(Headers.class);
+            available_method_annotations.add(Header.class);
+            available_method_annotations.add(Params.class);
+            available_method_annotations.add(Param.class);
+            available_method_annotations.add(Datas.class);
+            available_method_annotations.add(Data.class);
+            available_method_annotations.add(Body.class);
+            available_param_annotations.add(Header.class);
+            available_param_annotations.add(Param.class);
+            available_param_annotations.add(Data.class);
+            available_param_annotations.add(Body.class);
+            available_param_annotations.add(FilePath.class);
+            available_param_annotations.add(PathVariable.class);
+        }
+
+        public Parser(Method method) {
+            introspectedClass = method.getDeclaringClass();
+            introspectedMethod = method;
+            parameters = method.getParameters();
+            class_annotations = introspectedClass.getAnnotations();
+            method_annotations = method.getAnnotations();
+            param_annotations = method.getParameterAnnotations();
+        }
+
+        public boolean isNodeParamNecessary() {
+            return Arrays.stream(method_annotations).anyMatch(annotation ->available_method_annotations.contains(annotation.annotationType()));
+        }
+
+        public boolean isNodeParamExist() {
+            return parameters.length != 0 ? !available_param_annotations.contains(parameters[0]): false;
+        }
+
+        public <A extends Annotation> A getAnnotationOnClass(Class<A> annotationType) {
+            return introspectedClass.getAnnotation(annotationType);
+        }
+
+        public void setResourceBasePath(String env){
+            String[] paths = ClassUtils.getPackageName(introspectedClass).split("\\.");
+            int len = paths.length;
+            String base_path = env + "/" + paths[len - 2] + "/" + paths[len - 1] + "/";
+            resource_base_path = getClass().getResource("/").getPath() + base_path;
+        }
+
+        public void parseClassAnnotations(Object[] args) throws FileNotFoundException {
+            //获取接口上的注解@Resource
+            Resource resource_annotation = getAnnotationOnClass(Resource.class);
+            if (resource_annotation != null){
+                String yml_path = resource_annotation.value();
+                if (isNodeParamNecessary()) {
+                    if (!isNodeParamExist()) {
+                        throw new RuntimeException(String.format("类[%s]上有Resource注解,方法也存在注解（例如@Data，@Param），但方法参数[%s]未配置非注解类型的node参数",
+                                introspectedClass.getName(), introspectedMethod.getName()));
+                    }else {
+                        YmlUtils.readFile(resource_base_path + yml_path,(String) args[0],ymlData_Map);
+                    }
+                }
+            }
+        }
+
+        public void parseMethodAnnotations(Object args[], HttpRequest request){
+            if (method_annotations.length == 0 ) {
+                throw new RuntimeException(String.format("[%s]--[%s]方法上未配置任何注解", introspectedClass.getName(), introspectedMethod.getName()));
+            }
+            //如果全局变量的Authorization不为null，说明已经登陆过，请求自动添加Authorization
+            if (GlobalVar.GLOBAL_DATA_MAP.get("Authorization") != null) {
+                header_map.put("Authorization", GlobalVar.GLOBAL_DATA_MAP.get("Authorization"));
+            } else {
+                header_map.remove("Authorization");
+            }
+            for (Annotation annotation : method_annotations) {
+                if (annotation instanceof Post) {
+                    httpType = HttpType.POST;
+                    rest_url = ((Post) annotation).path();
+                } else if (annotation instanceof Get) {
+                    httpType = HttpType.GET;
+                    rest_url = ((Get) annotation).path();
+                } else if (annotation instanceof Delete) {
+                    httpType = HttpType.DELETE;
+                    rest_url = ((Delete) annotation).path();
+                } else if (annotation instanceof Put) {
+                    httpType = HttpType.PUT;
+                    rest_url = ((Put) annotation).path();
+                } else if (annotation instanceof Headers || annotation instanceof Header) {
+                    if (ymlData_Map.isEmpty()) {
+                        throw new RuntimeException(String.format("类[%s]上未配置Resource注解", introspectedMethod.getName()));
+                    }
+                    if (annotation instanceof Headers){
+                        for (Header header : ((Headers) annotation).value()) {
+                            String key = header.value();
+                            header_map.put(key, ymlData_Map.get(key));
+                        }
+                    }else {
+                        String key = ((Header) annotation).value();
+                        header_map.put(key, ymlData_Map.get(key));
+                    }
+                } else if (annotation instanceof Datas || annotation instanceof Data) {
+                    if (ymlData_Map.isEmpty()) {
+                        throw new RuntimeException(String.format("类[%s]上未配置Resource注解", introspectedClass.getName()));
+                    }
+                    if (annotation instanceof Datas){
+                        for (Data data : ((Datas) annotation).value()) {
+                            String key = data.value();
+                            data_map.put(key, ymlData_Map.get(key));
+                        }
+                    }else {
+                        String key = ((Data) annotation).value();
+                        data_map.put(key, ymlData_Map.get(key));
+                    }
+                } else if (annotation instanceof Params || annotation instanceof Param) {
+                    if (ymlData_Map.isEmpty()) {
+                        throw new RuntimeException(String.format("类[%s]上未配置Resource注解", introspectedClass.getName()));
+                    }
+                    if (annotation instanceof Params){
+                        for (Param param : ((Params) annotation).value()) {
+                            String key = param.value();
+                            param_map.put(key, ymlData_Map.get(key));
+                        }
+                    }else {
+                        String key = ((Param) annotation).value();
+                        param_map.put(key, ymlData_Map.get(key));
+                    }
+                } else if (annotation instanceof Body) {
+                    //解析@body设置的json格式数据文件
+                    String jsonPath = ((Body) annotation).value();
+                    body = JsonUtils.readFile(resource_base_path + jsonPath,(String) args[0]);
+                    if (body.isEmpty()) {
+                        throw new RuntimeException(String.format("请检查body注解[%s]里的文件内容", ((Body) annotation).value()));
+                    }
+                    header_map.put("Content-Type", "application/json");
+                } else {
+                    throw new RuntimeException(String.format("[%s]--[%s]方法上不支持配置的注解[%s]",
+                            introspectedClass.getName(),introspectedMethod.getName(), annotation.annotationType()));
+                }
+            }
+            request.setType(httpType);
+        }
+
+        public void parseParamAnnotations(Object args[],HttpRequest request){
+            JSONObject json = new JSONObject();
+            List<File> files = new ArrayList<>();
+            for (int i = 0; i < param_annotations.length; i++) {
+                Annotation[] annotations = param_annotations[i];
+                if (annotations.length != 0) {
+                    if (annotations[0] instanceof BaseUrl) {
+                        //自定义的base_url
+                        base_url = ((BaseUrl) annotations[0]).value();
+                    }
+                    else if (annotations[0] instanceof Header) {
+                        header_map.put((((Header) annotations[0]).value()), args[i]);
+                    } else if (annotations[0] instanceof Param) {
+                        param_map.put((((Param) annotations[0]).value()), args[i]);
+                    } else if (annotations[0] instanceof Data) {
+                        data_map.put((((Data) annotations[0]).value()), args[i]);
+                    } else if (annotations[0] instanceof PathVariable) {
+                        if(args[i] != null){
+                            rest_url = rest_url.replaceFirst("(\\w|/+)(\\{\\w+})(\\w|/?)", "$1"+ args[i] +"$3");
+                        }
+                    } else if (annotations[0] instanceof Body) {
+                        // @Body 首先判断一下方法上有没有@Body这个注解，如果有则替换掉json里的字段内容，如果没有，则用参数里的@Body创建新的json
+                        if (body.isEmpty()) {
+                            json.put(((Body) annotations[0]).value(), args[i]);
+                        } else {
+                            body = JsonUtils.replaceJsonBodyParams(body, ((Body) annotations[0]).value(), args[i]);
+                        }
+                    } else if (annotations[0] instanceof FilePath) {
+                        File file = new File(args[i].toString());
+                        files.add(file);
+                    } else {
+                        throw new RuntimeException(String.format("方法[%s]中配置的参数注解不支持[%s]", introspectedMethod.getName(), annotations[0].annotationType()));
+                    }
+                }
+            }
+            if (! json.isEmpty()) {
+                body = json.toJSONString();
+                header_map.put("Content-Type", "application/json");
+            }
+
+            // 如果request header中已经有appId， sign和timestamp，说明使用的是OpenAPI，header去掉Authorization
+            if(header_map.containsKey("appId") && header_map.containsKey("timestamp") && header_map.containsKey("sign")){
+                header_map.remove("Authorization");
+            }
+            request.setHeaders(header_map);
+            request.setParams(param_map);
+            request.setDatas(data_map);
+            request.setBody(body);
+            request.setFiles(files);
+            request.setPath(rest_url);
+        }
+
+    }
+
+
+    public static class MyInvocationHandler implements InvocationHandler {
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            String env = System.getProperty("spring.profiles.active");
+            if (null == env || env.trim().equals("")){
+                throw new RuntimeException("运行参数未指定测试环境，比如-Dspring.profiles.active=stest3");
+            }
+            if(base_url == null || base_url.trim().equals("")){
+                throw new RuntimeException("未配置base_url，请在application.yml文件env节点下配置或者在接口上使用@Url指定");
+            }
+            HttpRequest request = new HttpRequest();
+            request.setBaseURL(base_url);
+            Parser parser = new Parser(method);
+            parser.setResourceBasePath(env);
+            parser.parseClassAnnotations(args);
+            parser.parseMethodAnnotations(args, request);
+            parser.parseParamAnnotations(args, request);
+            return HttpUtils.getResponse(request);
+        }
+    }
+}
