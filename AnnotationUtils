@@ -1,0 +1,65 @@
+package com.msxf.common.utils;
+
+import java.lang.annotation.Annotation;
+import java.util.Set;
+
+/**
+ * Created by liang.pi on 2020/7/18.
+ */
+public class AnnotationUtils {
+    public static <A extends Annotation> A findAnnotation(Class<?> clazz, Class<A> annotationType, Set<Annotation> visited) {
+        int var1;
+        Annotation annotation;
+        try {
+            Annotation[] superclass = clazz.getDeclaredAnnotations();
+            Annotation[] var2 = superclass;
+            var1 = superclass.length;
+
+            int ifc;
+            for(ifc = 0; ifc < var1; ++ifc) {
+                annotation = var2[ifc];
+                if(annotation.annotationType() == annotationType) {
+                    return (A)annotation;
+                }
+            }
+
+            var2 = superclass;
+            var1 = superclass.length;
+
+            for(ifc = 0; ifc < var1; ++ifc) {
+                annotation = var2[ifc];
+                if(!isInJavaLangAnnotationPackage(annotation) && visited.add(annotation)) {
+                    Annotation annotation1 = findAnnotation(annotation.annotationType(), annotationType, visited);
+                    if(annotation1 != null) {
+                        return (A)annotation1;
+                    }
+                }
+            }
+        } catch (Exception var3) {
+            return null;
+        }
+
+        Class[] var4 = clazz.getInterfaces();
+        int var12 = var4.length;
+
+        for(var1 = 0; var1 < var12; ++var1) {
+            Class var5 = var4[var1];
+            annotation = findAnnotation(var5, annotationType, visited);
+            if(annotation != null) {
+                return (A)annotation;
+            }
+        }
+
+        Class var6 = clazz.getSuperclass();
+        if(var6 != null && Object.class != var6) {
+            return findAnnotation(var6, annotationType, visited);
+        } else {
+            return null;
+        }
+    }
+
+    public static boolean isInJavaLangAnnotationPackage(Annotation annotation){
+       return annotation.annotationType().getName().startsWith("java.lang.annotations");
+    }
+
+}
