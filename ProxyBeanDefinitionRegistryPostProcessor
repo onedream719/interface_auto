@@ -1,0 +1,102 @@
+package com.msxf.postProcessor;
+
+import com.msxf.factoryBean.ProxyFactoryBean;
+import org.springframework.beans.BeansException;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.beans.factory.support.BeanDefinitionBuilder;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor;
+import org.springframework.beans.factory.support.GenericBeanDefinition;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationContextAware;
+import org.springframework.context.ResourceLoaderAware;
+import org.springframework.core.env.Environment;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.ResourceLoader;
+import org.springframework.core.io.support.ResourcePatternResolver;
+import org.springframework.core.io.support.ResourcePatternUtils;
+import org.springframework.core.type.classreading.CachingMetadataReaderFactory;
+import org.springframework.core.type.classreading.MetadataReader;
+import org.springframework.core.type.classreading.MetadataReaderFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.util.ClassUtils;
+
+import java.io.IOException;
+import java.util.LinkedHashSet;
+import java.util.Set;
+
+/**
+ * Created by liang.pi on 2020/6/29.
+ * 功能: 扫描接口包下的所有接口，利用FactoryBean注册动态代理到ioc容器
+ */
+
+@Component
+public class ProxyBeanDefinitionRegistryPostProcessor implements BeanDefinitionRegistryPostProcessor,ResourceLoaderAware,ApplicationContextAware {
+    private static final String DEFAULT_RESOURCE_PATTERN = "**/*.class";
+    private static final String CLASSPATH_ALL_URL_PREFIX = "classpath:";
+    private MetadataReaderFactory metadataReaderFactory;
+    private ResourcePatternResolver resourcePatternResolver;
+    private ApplicationContext applicationContext;
+    private final String INTERFACE_PACKAGE="com.msxf.interfaces";
+
+    @Override
+    public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry beanDefinitionRegistry) throws BeansException {
+        Set<Class<?>> beanClasses = scannerPackages(INTERFACE_PACKAGE);
+        for (Class beanClazz : beanClasses) {
+            BeanDefinitionBuilder builder = BeanDefinitionBuilder.genericBeanDefinition();
+            GenericBeanDefinition definition = (GenericBeanDefinition) builder.getRawBeanDefinition();
+            definition.getConstructorArgumentValues().addGenericArgumentValue(beanClazz);
+            definition.setBeanClass(ProxyFactoryBean.class);
+            definition.setAutowireMode(GenericBeanDefinition.AUTOWIRE_BY_TYPE);
+            beanDefinitionRegistry.registerBeanDefinition(beanClazz.getSimpleName(), definition);
+        }
+    }
+
+    @Override
+    public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
+
+    }
+
+    @Override
+    public void setResourceLoader(ResourceLoader resourceLoader) {
+        this.resourcePatternResolver = ResourcePatternUtils.getResourcePatternResolver(resourceLoader);
+        this.metadataReaderFactory = new CachingMetadataReaderFactory(resourceLoader);
+    }
+
+    @Override
+    public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
+        this.applicationContext = applicationContext;
+    }
+
+    private Set<Class<?>> scannerPackages(String basePackage) {
+        Set<Class<?>> set = new LinkedHashSet<>();
+        String packageSearchPath = ProxyBeanDefinitionRegistryPostProcessor.CLASSPATH_ALL_URL_PREFIX + resolveBasePackage(basePackage) + '/' + DEFAULT_RESOURCE_PATTERN;
+        try {
+            Resource[] resources = this.resourcePatternResolver.getResources(packageSearchPath);
+            for (Resource resource : resources) {
+                if (resource.isReadable()) {
+                    MetadataReader metadataReader = this.metadataReaderFactory.getMetadataReader(resource);
+                    String className = metadataReader.getClassMetadata().getClassName();
+                    try {
+                        Class<?> clazz = Class.forName(className);
+                        set.add(clazz);
+                    } catch (ClassNotFoundException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return set;
+    }
+
+    protected String resolveBasePackage(String basePackage) {
+        return ClassUtils.convertClassNameToResourcePath(this.getEnvironment().resolveRequiredPlaceholders(basePackage));
+    }
+
+    private Environment getEnvironment() {
+        return applicationContext.getEnvironment();
+    }
+
+}
