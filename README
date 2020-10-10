@@ -51,13 +51,13 @@
              driver-class-name: com.mysql.cj.jdbc.Driver
              username: root
              password: 123456
-             url: jdbc:mysql://10.193.240.183:3306/smartxma_basic
+             url: jdbc:mysql://xxx.xxx.xxx.xxx:3306/smartxma_basic
            kms:
              type: com.alibaba.druid.pool.DruidDataSource
              driver-class-name: com.mysql.cj.jdbc.Driver
              username: root
              password: 123456
-             url: jdbc:mysql://10.193.240.183:3306/smartxma_kms
+             url: jdbc:mysql://xxx.xxx.xxx.xxx:3306/smartxma_kms
    b.在启动类上修改@DynamicDataSource，格式"数据源名=mapper接口位置=mapper文件位置"，例如：
      @DynamicDataSource({"basic=com.msxf.mapper.basic=classpath:mapper/basic/.xml",
                          "kms=com.msxf.mapper.kms=classpath:mapper/kms/.xml"})
