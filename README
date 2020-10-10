@@ -38,7 +38,7 @@
         3.执行时添加参数-Dspring.profiles.active=stest4来指定运行环境
 4、Jenkins集成
    说明：
-        1.地址：http://10.193.198.47:8080/login   admin/123456
+        1.地址：http://10.193.xxx.xxx:8080/login   admin/123456
         2.构建job：interface_auto
 5、多数据源配置
    a.在全局配置文件中配置数据源信息，如下：
