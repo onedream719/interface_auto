@@ -1,0 +1,69 @@
+1、接口定义（interface模块）
+   a)数据资源注解：@Resource。用于类上，所有方法共用。表示需要的参数值从哪儿取。
+     约定：
+        1.文件放testcase/resources/当前环境/xxx下，xxx必须和接口定义路径一致，只支持yml文件。
+        2.yml文件的内容由node、参数名-参数值对组成，参数名必须和接口定义注解的key一致。
+   b)Json请求体注解：@Body。既可用于方法也可用于参数。
+     约定：
+        1.json文件放testcase/resources/当前环境/xxx下，xxx必须和接口定义路径一致，和上面的yml文件一样。
+     说明：
+        1.用于方法时表示请求体来源于资源文件（第1个参数必须由非注解类型参数来指定对应的node）
+        2.用于参数时且方法上也有@Body则替换（支持jsonpath路径格式），如果方法上没有@Body则创建一个json体
+   c)请求方法注解：@POST, @GET, @PUT, @DELETE。用于方法上，属性path用于设置接口路径，属性description用于描述接口功能。
+     说明：
+        1.框架默认走gateway调用方式，在全局配置文件中配置各环境的baseUrl。如果baseUrl需要动态指定的话，使用下面的@BaseUrl注解
+   d)请求参数注解：@Data、@Header、@Param、@PathVariable、@FilePath、@Body（见上面Json请求体注解部分）
+     说明：
+        1.请求参数为form-data或者urlencoded类型时，使用@Data。既可用于方法也可用于参数上，用于方法时表示参数的值来源于资源文件（第1个参数必须由非注解类型参数来指定对应的node），用于参数时表示参数的值来源于调用时传值
+        2.请求参数为query时，使用@Param。既可用于方法也可用于参数上，用于方法时表示参数的值来源于资源文件（第1个参数必须由非注解类型参数来指定对应的node），用于参数时表示参数的值来源于调用时传值。
+        3.请求参数为Header时，使用@Header。既可用于方法也可用于参数上，用于方法时表示参数的值来源于资源文件（第1个参数必须由非注解类型参数来指定对应的node），用于参数时表示参数的值来源于调用时传值。
+        以上注解简单概括就是：用于方法时从指定文件的node下获取值，用于参数时从代码中获取值。
+        4.请求路径含/{id}时，使用@PathVariable。只能用于参数上
+        5.请求需要上传文件时，使用@FilePath指定文件路径。只能用于参数上
+        6.请求需要自己指定baseUrl时，使用@BaseUrl。只能用于参数上
+2、用例编写（testcase模块）
+   约定：
+        1.测试用例类必须继承BaseCase
+        2.@Feature注解用于类上说明测试类的功能，用于测试报告展示。@Story注解用于方法上说明测试用例的功能，用于测试报告展示。
+   说明：
+        1.需要调用某个api的接口时，只需要使用@AutoWired注入即可，比如
+          @Autowired
+          private LoginApi loginApi;
+        2.默认会给所有测试用例类一个basicCheck用于简单的断言响应，直接使用即可，比如
+          basicCheck.checkHttpResult(response, "10000", "请求成功");
+3、用例执行
+   说明：
+        1.用例执行使用的是testNG框架
+        2.xml组织用例的执行顺序，可以按照业务场景抽取为单个测试集
+        3.执行时添加参数-Dspring.profiles.active=stest4来指定运行环境
+4、Jenkins集成
+   说明：
+        1.地址：http://10.193.198.47:8080/login   admin/123456
+        2.构建job：interface_auto
+5、多数据源配置
+   a.在全局配置文件中配置数据源信息，如下：
+      spring:
+        profiles: stest4
+        datasource:
+           #多数据源配置
+           basic:
+             type: com.alibaba.druid.pool.DruidDataSource
+             driver-class-name: com.mysql.cj.jdbc.Driver
+             username: root
+             password: 123456
+             url: jdbc:mysql://10.193.240.183:3306/smartxma_basic
+           kms:
+             type: com.alibaba.druid.pool.DruidDataSource
+             driver-class-name: com.mysql.cj.jdbc.Driver
+             username: root
+             password: 123456
+             url: jdbc:mysql://10.193.240.183:3306/smartxma_kms
+   b.在启动类上修改@DynamicDataSource，格式"数据源名=mapper接口位置=mapper文件位置"，例如：
+     @DynamicDataSource({"basic=com.msxf.mapper.basic=classpath:mapper/basic/.xml",
+                         "kms=com.msxf.mapper.kms=classpath:mapper/kms/.xml"})
+
+6、模块依赖关系
+controller--service
+service-common,dao,interface
+interface--common
+testcase--interface, controller
